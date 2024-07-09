@@ -1,4 +1,5 @@
 #EXTM3U
 #EXTINF:-1 tvg-id="inside out 2",InsideOut 2 (720p)
 https://ac.bigtimedelivery.net/_v13/f26cc9341d5d7d38f97618aec20447c1aedc33242ea5a857f1b283755170e113f49ce5498a32b870be62b4f7def075a378db4355101602bf266dfa37d152f7846cac7a6c2ffd93c231be7db1e067840e02d148ab00042c611841fcc35041274a0d8409892b5fe915213be65c0fc664804add3efbf970706d5df265d79ce78135/playlist.m3u8
-#EXTINF:-1 tvg-id="inside out",InsideOut (720p)
+#EXTINF:-1 tvg-id="80s buildup ",80s Buildup (720p)
+https://s1.playvity.com/hls2/01/00013/2ep0q33ikkuv_,n,h,.urlset/master.m3u8?t=Qx_2CWgEO_J7VU3aXP2aIc2e3z3tzUq2JWlJD98wSJ8&s=1720515253&e=43200&f=67958&i=0.0&sp=0
