@@ -1,13 +1,26 @@
 name: Validate Stream URLs
-on: [push, schedule]
+
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 6 * * *'  # Daily at 6 AM UTC
+  workflow_dispatch:  # Manual trigger
 
 jobs:
   check-urls:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install dependencies
-        run: pip install requests m3u8
-      - name: Check stream availability
-        run: |
-          python .github/scripts/check_streams.py
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Install dependencies
+      run: pip install requests
+
+    - name: Check stream URLs
+      run: python .github/scripts/check_streams.py
