@@ -5,6 +5,9 @@ on:
     - cron: '0 0 * * 0'  # Run every Sunday at midnight UTC
   workflow_dispatch:      # Allow manual runs
 
+permissions:
+  contents: write  # ← THIS IS THE KEY FIX
+
 jobs:
   update-playlist:
     runs-on: ubuntu-latest
