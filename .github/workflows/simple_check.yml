@@ -8,14 +8,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Basic file check
+      - name: Check M3U file and URLs
         run: |
-          echo "Checking if M3U file exists..."
-          if [ -f "sivarenu.m3u" ]; then
-            echo "✅ File found"
-            echo "File content:"
-            head -10 sivarenu.m3u
-          else
-            echo "❌ File not found"
-            ls -la
+          echo "🔍 Checking M3U file..."
+          
+          if [ ! -f "sivarenu.m3u" ]; then
+            echo "❌ sivarenu.m3u not found!"
+            exit 1
           fi
+          
+          # Count URLs in the file
+          URL_COUNT=$(grep -c "^http" sivarenu.m3u || true)
+          echo "📊 Found $URL_COUNT stream URLs"
+          
+          # Count EXTINF entries
+          STREAM_COUNT=$(grep -c "^#EXTINF" sivarenu.m3u || true)
+          echo "📺 Found $STREAM_COUNT stream entries"
+          
+          # Show first few URLs as sample
+          echo "🔗 Sample URLs:"
+          grep "^http" sivarenu.m3u | head -5
