@@ -12,23 +12,26 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Update playlist (example)
+    - name: Update playlist
       run: |
-        echo "# This is where you could add automated playlist updates"
-        echo "# For example:"
-        echo "# - Fetch new streams from APIs"
-        echo "# - Remove dead links"
-        echo "# - Sort entries"
-        echo "# - Add new categories"
-        
-        # Example: Just add a timestamp comment
+        echo "🔄 Updating playlist..."
         echo "# Last updated: $(date)" >> sivarenu.m3u
+        echo "✅ Timestamp added"
         
     - name: Commit and push if changes
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git add sivarenu.m3u
-        git diff --staged --quiet || git commit -m "Auto-update playlist $(date +%Y-%m-%d)"
-        git push
+        
+        # Check if there are changes to commit
+        if git diff --staged --quiet; then
+          echo "📝 No changes to commit"
+        else
+          git commit -m "Auto-update playlist $(date +%Y-%m-%d)"
+          git push
+          echo "✅ Changes committed and pushed"
+        fi
