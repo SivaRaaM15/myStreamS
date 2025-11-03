@@ -1,0 +1,171 @@
+name: Advanced URL Health Check
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Run every 6 hours
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  advanced-url-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y curl wget ffmpeg bc
+
+    - name: Comprehensive URL Analysis
+      run: |
+        echo "🚀 Starting Advanced URL Health Check..."
+        echo "=========================================="
+        
+        # Check if file exists
+        if [ ! -f "sivarenu.m3u" ]; then
+          echo "❌ M3U file not found!"
+          exit 1
+        fi
+
+        # Extract URLs (limit to 10 for performance)
+        URLs=$(grep "^http" sivarenu.m3u | head -10)
+        TOTAL_URLS=$(echo "$URLs" | wc -l)
+        
+        echo "📊 Testing $TOTAL_URLS sample URLs..."
+        echo ""
+
+        # Initialize counters
+        VALID_COUNT=0
+        STREAM_COUNT=0
+        HTML_COUNT=0
+        ERROR_COUNT=0
+        
+        # Test each URL
+        I=1
+        echo "$URLs" | while read URL; do
+          if [ -z "$URL" ]; then
+            continue
+          fi
+          
+          echo "🔍 Testing URL $I: ${URL:0:60}..."
+          
+          # Clean URL
+          CLEAN_URL=$(echo "$URL" | tr -d '\r' | sed 's/[[:space:]]*$//')
+          
+          # 1. Basic Connectivity Test
+          echo "   📡 Testing connectivity..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 --user-agent "Mozilla/5.0" "$CLEAN_URL" 2>/dev/null || echo "000")
+          
+          # 2. Content Type Detection
+          echo "   🔍 Checking content type..."
+          CONTENT_TYPE=$(curl -s -I --max-time 5 --user-agent "Mozilla/5.0" "$CLEAN_URL" 2>/dev/null | grep -i "content-type:" | head -1 | tr -d '\r' || echo "unknown")
+          
+          # 3. File Size Check (first 1MB)
+          echo "   💾 Checking response size..."
+          CONTENT_LENGTH=$(curl -s -I --max-time 5 --user-agent "Mozilla/5.0" "$CLEAN_URL" 2>/dev/null | grep -i "content-length:" | head -1 | awk '{print $2}' | tr -d '\r')
+          
+          # 4. Stream Detection Test
+          echo "   📺 Testing for stream..."
+          IS_STREAM=0
+          if curl -s --max-time 5 --user-agent "VLC" "$CLEAN_URL" 2>/dev/null | head -c 1000 | grep -q "EXTM3U\|#EXTINF"; then
+            IS_STREAM=1
+            STREAM_COUNT=$((STREAM_COUNT + 1))
+          fi
+          
+          # 5. Redirect Check
+          echo "   🔄 Checking redirects..."
+          REDIRECTS=$(curl -s -I -L --max-time 5 --user-agent "Mozilla/5.0" "$CLEAN_URL" 2>/dev/null | grep -i "location:" | wc -l)
+          
+          # 6. Response Time
+          echo "   ⏱️  Measuring response time..."
+          START_TIME=$(date +%s%3N)
+          curl -s -o /dev/null --max-time 8 --user-agent "Mozilla/5.0" "$CLEAN_URL" 2>/dev/null
+          END_TIME=$(date +%s%3N)
+          RESPONSE_TIME=$((END_TIME - START_TIME))
+          
+          # Analysis Results
+          echo "   📊 Analysis Results:"
+          echo "      HTTP Status: $HTTP_CODE"
+          echo "      Content Type: $CONTENT_TYPE"
+          echo "      Content Length: ${CONTENT_LENGTH:-unknown}"
+          echo "      Response Time: ${RESPONSE_TIME}ms"
+          echo "      Redirects: $REDIRECTS"
+          echo "      Is Stream: $([ $IS_STREAM -eq 1 ] && echo 'Yes' || echo 'No')"
+          
+          # Determine URL Health
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "206" ]; then
+            if [ $IS_STREAM -eq 1 ]; then
+              echo "   ✅ HEALTHY - Working stream"
+              VALID_COUNT=$((VALID_COUNT + 1))
+            elif echo "$CONTENT_TYPE" | grep -q "video\|audio"; then
+              echo "   ✅ HEALTHY - Media content detected"
+              VALID_COUNT=$((VALID_COUNT + 1))
+            elif [ "${CONTENT_LENGTH:-0}" -gt 10000 ]; then
+              echo "   ⚠️  SUSPICIOUS - Large content but not identified as stream"
+            else
+              echo "   ⚠️  CAUTION - Responds but content type unclear"
+            fi
+          elif [ "$HTTP_CODE" = "403" ]; then
+            echo "   ❌ BLOCKED - Access forbidden (403)"
+            ERROR_COUNT=$((ERROR_COUNT + 1))
+          elif [ "$HTTP_CODE" = "404" ]; then
+            echo "   ❌ BROKEN - Not found (404)"
+            ERROR_COUNT=$((ERROR_COUNT + 1))
+          elif [ "$HTTP_CODE" = "000" ]; then
+            echo "   ❌ OFFLINE - No response/timeout"
+            ERROR_COUNT=$((ERROR_COUNT + 1))
+          else
+            echo "   ⚠️  WARNING - HTTP $HTTP_CODE"
+            ERROR_COUNT=$((ERROR_COUNT + 1))
+          fi
+          
+          echo ""
+          I=$((I + 1))
+          
+          # Be nice to servers
+          sleep 2
+        done
+
+        # Final Summary
+        echo "=========================================="
+        echo "📈 HEALTH CHECK SUMMARY"
+        echo "=========================================="
+        echo "✅ Healthy URLs: $VALID_COUNT/$TOTAL_URLS"
+        echo "📺 Confirmed Streams: $STREAM_COUNT"
+        echo "❌ Problematic URLs: $ERROR_COUNT"
+        echo "⏱️  Check completed at: $(date)"
+        
+        # Set workflow status based on results
+        if [ $VALID_COUNT -eq 0 ]; then
+          echo "❌ CRITICAL: No healthy URLs found!"
+          exit 1
+        elif [ $VALID_COUNT -lt $((TOTAL_URLS / 2)) ]; then
+          echo "⚠️  WARNING: Less than 50% URLs are healthy"
+          exit 0  # Don't fail, just warn
+        else
+          echo "✅ SUCCESS: Majority of URLs are healthy"
+          exit 0
+        fi
+
+    - name: Generate Health Report
+      if: always()
+      run: |
+        echo "📋 Generating Health Report..."
+        echo "Workflow: ${{ github.workflow }}"
+        echo "Run ID: ${{ github.run_id }}"
+        echo "Status: ${{ job.status }}"
+        echo "Completed: $(date)"
+        echo "Repository: ${{ github.repository }}"
+
+    - name: Upload Health Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: url-health-report
+        path: |
+          sivarenu.m3u
+        retention-days: 3
