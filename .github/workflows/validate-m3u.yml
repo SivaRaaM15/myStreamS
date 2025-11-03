@@ -10,70 +10,60 @@ on:
 jobs:
   validate-m3u:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Validate M3U file structure
-      run: |
-        echo "Checking M3U file structure..."
-        
-        # Check if the file exists
-        if [ ! -f "sivarenu.m3u" ]; then
-          echo "❌ Error: sivarenu.m3u file not found!"
-          exit 1
-        fi
-        
-        # Check if file is not empty
-        if [ ! -s "sivarenu.m3u" ]; then
-          echo "❌ Error: sivarenu.m3u file is empty!"
-          exit 1
-        fi
-        
-        # Check if file starts with #EXTM3U header
-        if ! head -n 1 "sivarenu.m3u" | grep -q "^#EXTM3U"; then
-          echo "❌ Error: M3U file must start with #EXTM3U header!"
-          exit 1
-        fi
-        
-        echo "✅ M3U file structure is valid!"
-        
-    - name: Count streams in playlist
-      run: |
-        echo "Analyzing playlist content..."
-        
-        # Count total lines
-        total_lines=$(wc -l < sivarenu.m3u)
-        echo "Total lines: $total_lines"
-        
-        # Count #EXTINF lines (stream entries)
-        stream_count=$(grep -c "^#EXTINF" sivarenu.m3u || true)
-        echo "Number of streams: $stream_count"
-        
-        # Count URL lines
-        url_count=$(grep -c "^http" sivarenu.m3u || true)
-        echo "Number of URLs: $url_count"
-        
-        if [ $stream_count -eq 0 ]; then
-          echo "⚠️  Warning: No #EXTINF entries found"
-        fi
-        
-        if [ $url_count -eq 0 ]; then
-          echo "⚠️  Warning: No HTTP URLs found"
-        fi
+      - name: Validate M3U file structure
+        run: |
+          echo "Checking M3U file structure..."
+          # Check if the file exists
+          if [ ! -f "sivarenu.m3u" ]; then
+            echo "❌ Error: sivarenu.m3u file not found!"
+            exit 1
+          fi
+          # Check if file is not empty
+          if [ ! -s "sivarenu.m3u" ]; then
+            echo "❌ Error: sivarenu.m3u file is empty!"
+            exit 1
+          fi
+          # Check if file starts with #EXTM3U header
+          if ! head -n 1 "sivarenu.m3u" | grep -q "^#EXTM3U"; then
+            echo "❌ Error: M3U file must start with #EXTM3U header!"
+            exit 1
+          fi
+          echo "✅ M3U file structure is valid!"
 
-    - name: Create backup on validation success
-      if: success()
-      run: |
-        timestamp=$(date +"%Y%m%d_%H%M%S")
-        cp sivarenu.m3u "sivarenu_backup_$timestamp.m3u"
-        echo "✅ Backup created: sivarenu_backup_$timestamp.m3u"
-        
-    - name: Upload backup as artifact
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: m3u-backup
-        path: sivarenu_backup_*.m3u
-        retention-days: 7
+      - name: Count streams in playlist
+        run: |
+          echo "Analyzing playlist content..."
+          # Count total lines
+          total_lines=$(wc -l < sivarenu.m3u)
+          echo "Total lines: $total_lines"
+          # Count #EXTINF lines (stream entries)
+          stream_count=$(grep -c "^#EXTINF" sivarenu.m3u || true)
+          echo "Number of streams: $stream_count"
+          # Count URL lines
+          url_count=$(grep -c "^http" sivarenu.m3u || true)
+          echo "Number of URLs: $url_count"
+          if [ $stream_count -eq 0 ]; then
+            echo "⚠️ Warning: No #EXTINF entries found"
+          fi
+          if [ $url_count -eq 0 ]; then
+            echo "⚠️ Warning: No HTTP URLs found"
+          fi
+
+      - name: Create backup on validation success
+        if: success()
+        run: |
+          timestamp=$(date +"%Y%m%d_%H%M%S")
+          cp sivarenu.m3u "sivarenu_backup_$timestamp.m3u"
+          echo "✅ Backup created: sivarenu_backup_$timestamp.m3u"
+
+      - name: Upload backup as artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3u-backup
+          path: sivarenu_backup_*.m3u
+          retention-days: 7
