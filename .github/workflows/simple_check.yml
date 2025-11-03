@@ -29,50 +29,20 @@ jobs:
           echo "🔗 Sample URLs:"
           grep "^http" sivarenu.m3u | head -5
           
-      - name: Install Python dependencies
-        run: pip install requests
-        
-      - name: Validate URLs with Python
+      - name: Basic URL validation with curl
         run: |
-          python3 -c "
-import requests
-import re
-
-print('Starting URL validation...')
-
-try:
-    with open('sivarenu.m3u', 'r') as f:
-        content = f.read()
-    
-    urls = re.findall(r'^https?://[^\s]+', content, re.MULTILINE)
-    print(f'Found {len(urls)} URLs to check')
-    
-    if not urls:
-        print('No URLs found to test')
-        exit(0)
-    
-    print('Testing first 3 URLs...')
-    
-    for i, url in enumerate(urls[:3]):
-        clean_url = url.strip()
-        print(f'Testing URL {i+1}: {clean_url[:50]}...')
-        
-        try:
-            response = requests.head(clean_url, timeout=5, allow_redirects=True)
-            status = response.status_code
-            if status < 400:
-                print(f'   ✅ Status: {status}')
-            else:
-                print(f'   ⚠️  Status: {status}')
-        except requests.exceptions.Timeout:
-            print(f'   ⏰ Timeout after 5 seconds')
-        except requests.exceptions.ConnectionError:
-            print(f'   🔌 Connection failed')
-        except Exception as e:
-            print(f'   ❌ Error: {type(e).__name__}')
-    
-    print('URL validation completed')
-    
-except Exception as e:
-    print(f'Error during validation: {e}')
-"
+          echo "🌐 Testing URL accessibility..."
+          
+          # Extract first 3 URLs and test with curl
+          grep "^http" sivarenu.m3u | head -3 | while read url; do
+            echo "Testing: $url"
+            
+            # Use curl to check if URL is accessible (with timeout)
+            if curl --head --silent --fail --max-time 5 "$url" > /dev/null 2>&1; then
+              echo "   ✅ Accessible"
+            else
+              echo "   ❌ Not accessible or timeout"
+            fi
+          done
+          
+          echo "URL check completed!"
