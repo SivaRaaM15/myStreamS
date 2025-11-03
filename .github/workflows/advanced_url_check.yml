@@ -10,7 +10,7 @@ on:
 jobs:
   advanced-url-check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     
     steps:
     - name: Checkout repository
@@ -19,12 +19,12 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y curl wget ffmpeg bc
+        sudo apt-get install -y curl parallel  # Use parallel for faster processing
 
-    - name: Comprehensive URL Analysis
+    - name: Fast URL Health Check
       run: |
-        echo "🚀 Starting Advanced URL Health Check..."
-        echo "=========================================="
+        echo "🚀 Starting Fast URL Health Check..."
+        echo "======================================"
         
         # Check if file exists
         if [ ! -f "sivarenu.m3u" ]; then
@@ -32,138 +32,102 @@ jobs:
           exit 1
         fi
 
-        # Extract URLs (limit to 10 for performance)
-        URLs=$(grep "^http" sivarenu.m3u | head -10)
-        TOTAL_URLS=$(echo "$URLs" | wc -l)
+        # Extract URLs (limit to 8 for speed)
+        grep "^http" sivarenu.m3u | head -8 > urls_to_test.txt
+        TOTAL_URLS=$(wc -l < urls_to_test.txt)
         
-        echo "📊 Testing $TOTAL_URLS sample URLs..."
+        echo "📊 Testing $TOTAL_URLS URLs with parallel processing..."
         echo ""
 
-        # Initialize counters
-        VALID_COUNT=0
-        STREAM_COUNT=0
-        HTML_COUNT=0
-        ERROR_COUNT=0
-        
-        # Test each URL
-        I=1
-        echo "$URLs" | while read URL; do
-          if [ -z "$URL" ]; then
-            continue
-          fi
+        # Function to test a single URL
+        test_single_url() {
+          local URL="$1"
+          local NUM="$2"
           
-          echo "🔍 Testing URL $I: ${URL:0:60}..."
+          echo "🔍 Testing URL $NUM..."
+          echo "   URL: ${URL:0:50}..."
           
           # Clean URL
           CLEAN_URL=$(echo "$URL" | tr -d '\r' | sed 's/[[:space:]]*$//')
           
-          # 1. Basic Connectivity Test
-          echo "   📡 Testing connectivity..."
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 --user-agent "Mozilla/5.0" "$CLEAN_URL" 2>/dev/null || echo "000")
+          # SINGLE CURL CALL with multiple checks
+          RESPONSE=$(curl -s -I -L --max-time 10 --user-agent "Mozilla/5.0" --write-out "HTTP_CODE:%{http_code}\nCONTENT_TYPE:%{content_type}\nREDIRECTS:%{num_redirects}\nTIME_TOTAL:%{time_total}\n" "$CLEAN_URL" 2>/dev/null || echo "HTTP_CODE:000")
           
-          # 2. Content Type Detection
-          echo "   🔍 Checking content type..."
-          CONTENT_TYPE=$(curl -s -I --max-time 5 --user-agent "Mozilla/5.0" "$CLEAN_URL" 2>/dev/null | grep -i "content-type:" | head -1 | tr -d '\r' || echo "unknown")
+          # Parse response
+          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
+          CONTENT_TYPE=$(echo "$RESPONSE" | grep "CONTENT_TYPE:" | cut -d: -f2-)
+          REDIRECTS=$(echo "$RESPONSE" | grep "REDIRECTS:" | cut -d: -f2)
+          RESPONSE_TIME=$(echo "$RESPONSE" | grep "TIME_TOTAL:" | cut -d: -f2)
           
-          # 3. File Size Check (first 1MB)
-          echo "   💾 Checking response size..."
-          CONTENT_LENGTH=$(curl -s -I --max-time 5 --user-agent "Mozilla/5.0" "$CLEAN_URL" 2>/dev/null | grep -i "content-length:" | head -1 | awk '{print $2}' | tr -d '\r')
-          
-          # 4. Stream Detection Test
-          echo "   📺 Testing for stream..."
+          # Quick stream check (only first few bytes)
           IS_STREAM=0
-          if curl -s --max-time 5 --user-agent "VLC" "$CLEAN_URL" 2>/dev/null | head -c 1000 | grep -q "EXTM3U\|#EXTINF"; then
+          if curl -s --max-time 5 --range 0-1000 --user-agent "VLC" "$CLEAN_URL" 2>/dev/null | grep -q "EXTM3U\|#EXTINF"; then
             IS_STREAM=1
-            STREAM_COUNT=$((STREAM_COUNT + 1))
           fi
           
-          # 5. Redirect Check
-          echo "   🔄 Checking redirects..."
-          REDIRECTS=$(curl -s -I -L --max-time 5 --user-agent "Mozilla/5.0" "$CLEAN_URL" 2>/dev/null | grep -i "location:" | wc -l)
+          # Display results
+          echo "   📊 Status: HTTP $HTTP_CODE"
+          echo "   📁 Type: ${CONTENT_TYPE:-unknown}"
+          echo "   🔄 Redirects: $REDIRECTS"
+          echo "   ⏱️  Time: ${RESPONSE_TIME}s"
+          echo "   📺 Stream: $([ $IS_STREAM -eq 1 ] && echo 'Yes' || echo 'No')"
           
-          # 6. Response Time
-          echo "   ⏱️  Measuring response time..."
-          START_TIME=$(date +%s%3N)
-          curl -s -o /dev/null --max-time 8 --user-agent "Mozilla/5.0" "$CLEAN_URL" 2>/dev/null
-          END_TIME=$(date +%s%3N)
-          RESPONSE_TIME=$((END_TIME - START_TIME))
-          
-          # Analysis Results
-          echo "   📊 Analysis Results:"
-          echo "      HTTP Status: $HTTP_CODE"
-          echo "      Content Type: $CONTENT_TYPE"
-          echo "      Content Length: ${CONTENT_LENGTH:-unknown}"
-          echo "      Response Time: ${RESPONSE_TIME}ms"
-          echo "      Redirects: $REDIRECTS"
-          echo "      Is Stream: $([ $IS_STREAM -eq 1 ] && echo 'Yes' || echo 'No')"
-          
-          # Determine URL Health
+          # Health assessment
           if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "206" ]; then
             if [ $IS_STREAM -eq 1 ]; then
               echo "   ✅ HEALTHY - Working stream"
-              VALID_COUNT=$((VALID_COUNT + 1))
+              echo "HEALTHY" > "result_$NUM.txt"
             elif echo "$CONTENT_TYPE" | grep -q "video\|audio"; then
-              echo "   ✅ HEALTHY - Media content detected"
-              VALID_COUNT=$((VALID_COUNT + 1))
-            elif [ "${CONTENT_LENGTH:-0}" -gt 10000 ]; then
-              echo "   ⚠️  SUSPICIOUS - Large content but not identified as stream"
+              echo "   ✅ HEALTHY - Media content"
+              echo "HEALTHY" > "result_$NUM.txt"
             else
-              echo "   ⚠️  CAUTION - Responds but content type unclear"
+              echo "   ⚠️  CAUTION - Not a stream"
+              echo "WARNING" > "result_$NUM.txt"
             fi
-          elif [ "$HTTP_CODE" = "403" ]; then
-            echo "   ❌ BLOCKED - Access forbidden (403)"
-            ERROR_COUNT=$((ERROR_COUNT + 1))
-          elif [ "$HTTP_CODE" = "404" ]; then
-            echo "   ❌ BROKEN - Not found (404)"
-            ERROR_COUNT=$((ERROR_COUNT + 1))
-          elif [ "$HTTP_CODE" = "000" ]; then
-            echo "   ❌ OFFLINE - No response/timeout"
-            ERROR_COUNT=$((ERROR_COUNT + 1))
           else
-            echo "   ⚠️  WARNING - HTTP $HTTP_CODE"
-            ERROR_COUNT=$((ERROR_COUNT + 1))
+            echo "   ❌ PROBLEM - HTTP $HTTP_CODE"
+            echo "ERROR" > "result_$NUM.txt"
           fi
           
           echo ""
-          I=$((I + 1))
-          
-          # Be nice to servers
-          sleep 2
-        done
+        }
+
+        # Export function for parallel use
+        export -f test_single_url
+
+        # Process URLs in parallel (max 2 at a time)
+        cat urls_to_test.txt | parallel -j 2 --line-buffer "test_single_url {} {#}"
+
+        # Count results
+        HEALTHY_COUNT=$(ls result_*.txt 2>/dev/null | xargs grep -l "HEALTHY" 2>/dev/null | wc -l || echo 0)
+        ERROR_COUNT=$(ls result_*.txt 2>/dev/null | xargs grep -l "ERROR" 2>/dev/null | wc -l || echo 0)
+        
+        # Cleanup
+        rm -f urls_to_test.txt result_*.txt 2>/dev/null || true
 
         # Final Summary
         echo "=========================================="
         echo "📈 HEALTH CHECK SUMMARY"
         echo "=========================================="
-        echo "✅ Healthy URLs: $VALID_COUNT/$TOTAL_URLS"
-        echo "📺 Confirmed Streams: $STREAM_COUNT"
+        echo "✅ Healthy URLs: $HEALTHY_COUNT/$TOTAL_URLS"
         echo "❌ Problematic URLs: $ERROR_COUNT"
         echo "⏱️  Check completed at: $(date)"
         
-        # Set workflow status based on results
-        if [ $VALID_COUNT -eq 0 ]; then
+        # Set workflow status
+        if [ $HEALTHY_COUNT -eq 0 ]; then
           echo "❌ CRITICAL: No healthy URLs found!"
           exit 1
-        elif [ $VALID_COUNT -lt $((TOTAL_URLS / 2)) ]; then
+        elif [ $HEALTHY_COUNT -lt $((TOTAL_URLS / 2)) ]; then
           echo "⚠️  WARNING: Less than 50% URLs are healthy"
-          exit 0  # Don't fail, just warn
+          exit 0
         else
           echo "✅ SUCCESS: Majority of URLs are healthy"
           exit 0
         fi
 
-    - name: Generate Health Report
-      if: always()
-      run: |
-        echo "📋 Generating Health Report..."
-        echo "Workflow: ${{ github.workflow }}"
-        echo "Run ID: ${{ github.run_id }}"
-        echo "Status: ${{ job.status }}"
-        echo "Completed: $(date)"
-        echo "Repository: ${{ github.repository }}"
-
     - name: Upload Health Report
       uses: actions/upload-artifact@v4
+      if: always()
       with:
         name: url-health-report
         path: |
