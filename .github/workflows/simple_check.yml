@@ -28,3 +28,51 @@ jobs:
           # Show first few URLs as sample
           echo "🔗 Sample URLs:"
           grep "^http" sivarenu.m3u | head -5
+          
+      - name: Install Python dependencies
+        run: pip install requests
+        
+      - name: Validate URLs with Python
+        run: |
+          python3 -c "
+import requests
+import re
+
+print('Starting URL validation...')
+
+try:
+    with open('sivarenu.m3u', 'r') as f:
+        content = f.read()
+    
+    urls = re.findall(r'^https?://[^\s]+', content, re.MULTILINE)
+    print(f'Found {len(urls)} URLs to check')
+    
+    if not urls:
+        print('No URLs found to test')
+        exit(0)
+    
+    print('Testing first 3 URLs...')
+    
+    for i, url in enumerate(urls[:3]):
+        clean_url = url.strip()
+        print(f'Testing URL {i+1}: {clean_url[:50]}...')
+        
+        try:
+            response = requests.head(clean_url, timeout=5, allow_redirects=True)
+            status = response.status_code
+            if status < 400:
+                print(f'   ✅ Status: {status}')
+            else:
+                print(f'   ⚠️  Status: {status}')
+        except requests.exceptions.Timeout:
+            print(f'   ⏰ Timeout after 5 seconds')
+        except requests.exceptions.ConnectionError:
+            print(f'   🔌 Connection failed')
+        except Exception as e:
+            print(f'   ❌ Error: {type(e).__name__}')
+    
+    print('URL validation completed')
+    
+except Exception as e:
+    print(f'Error during validation: {e}')
+"
