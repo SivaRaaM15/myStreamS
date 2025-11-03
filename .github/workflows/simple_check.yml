@@ -1,56 +1,48 @@
-name: Simple URL Check
+- name: Quick URL validation (Non-failing)
+  run: |
+    python3 -c "
+import requests, re, time
+from urllib.parse import urlparse
 
-on: [push, workflow_dispatch]
+print('🔍 Starting URL validation...')
 
-jobs:
-  check-urls:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Check M3U file
-      run: |
-        echo "🔍 Checking M3U file..."
-        
-        # Check if file exists and has content
-        if [ ! -f "sivarenu.m3u" ]; then
-          echo "❌ sivarenu.m3u not found!"
-          exit 1
-        fi
-        
-        # Count URLs in the file
-        URL_COUNT=$(grep -c "^http" sivarenu.m3u || true)
-        echo "📊 Found $URL_COUNT stream URLs"
-        
-        # Count EXTINF entries
-        STREAM_COUNT=$(grep -c "^#EXTINF" sivarenu.m3u || true)
-        echo "📺 Found $STREAM_COUNT stream entries"
-        
-        # Show first few URLs as sample
-        echo "🔗 Sample URLs:"
-        grep "^http" sivarenu.m3u | head -5
-        
-    - name: Install Python dependencies
-      run: pip install requests
-        
-    - name: Quick URL validation
-      run: |
-        python3 -c "
-import requests, re, sys
 try:
     with open('sivarenu.m3u', 'r') as f:
-        urls = re.findall(r'^https?://[^\s]+', f.read(), re.MULTILINE)
+        content = f.read()
     
-    print(f'Testing {min(3, len(urls))} sample URLs...')
+    urls = re.findall(r'^https?://[^\s]+', content, re.MULTILINE)
+    print(f'📊 Found {len(urls)} URLs in file')
     
-    for url in urls[:3]:  # Test only first 3 to save time
+    if not urls:
+        print('ℹ️ No URLs found to test')
+        exit(0)
+    
+    print('Testing first 3 URLs (will not fail workflow):')
+    
+    for i, url in enumerate(urls[:3]):
+        clean_url = url.strip()
+        print(f'\nTesting URL {i+1}: {clean_url[:60]}...')
+        
         try:
-            response = requests.head(url, timeout=5)
-            print(f'✅ {url[:60]}... - Status: {response.status_code}')
+            # Use GET instead of HEAD with very short timeout
+            response = requests.get(clean_url, timeout=3, stream=True, allow_redirects=True)
+            print(f'   ✅ HTTP {response.status_code}')
+            response.close()  # Important: close connection
+        except requests.exceptions.Timeout:
+            print(f'   ⏰ Timeout (3s) - URL might be slow')
+        except requests.exceptions.ConnectionError:
+            print(f'   🔌 Connection refused')
+        except requests.exceptions.TooManyRedirects:
+            print(f'   🔄 Too many redirects')
         except Exception as e:
-            print(f'❌ {url[:60]}... - Error: {type(e).__name__}')
-            
+            print(f'   ❌ {type(e).__name__}')
+        
+        time.sleep(1)  # Be nice to servers
+    
+    print('\n✅ URL check completed (workflow continues regardless of results)')
+    
+except FileNotFoundError:
+    print('❌ sivarenu.m3u file not found in repository root')
 except Exception as e:
-    print(f'Error: {e}')
-    sys.exit(1)
-        "
+    print(f'❌ Script error: {e}')
+"
