@@ -1,0 +1,55 @@
+name: Simple URL Check
+
+on: [push, workflow_dispatch]
+
+jobs:
+  check-urls:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check M3U file
+        run: |
+          echo "🔍 Checking M3U file..."
+          
+          if [ ! -f "sivarenu.m3u" ]; then
+            echo "❌ sivarenu.m3u not found!"
+            exit 1
+          fi
+          
+          URL_COUNT=$(grep -c "^http" sivarenu.m3u || true)
+          echo "📊 Found $URL_COUNT stream URLs"
+          
+          STREAM_COUNT=$(grep -c "^#EXTINF" sivarenu.m3u || true)
+          echo "📺 Found $STREAM_COUNT stream entries"
+          
+          echo "🔗 Sample URLs:"
+          grep "^http" sivarenu.m3u | head -5
+          
+      - name: Install Python dependencies
+        run: pip install requests
+            
+      - name: Quick URL validation
+        run: |
+          python3 << 'EOF'
+import requests
+import re
+import sys
+
+try:
+    with open('sivarenu.m3u', 'r') as f:
+        urls = re.findall(r'^https?://[^\s]+', f.read(), re.MULTILINE)
+    
+    print(f'Testing {min(3, len(urls))} sample URLs...')
+    
+    for url in urls[:3]:
+        try:
+            response = requests.head(url, timeout=5)
+            print(f'✅ {url[:60]}... - Status: {response.status_code}')
+        except Exception as e:
+            print(f'❌ {url[:60]}... - Error: {type(e).__name__}')
+            
+except Exception as e:
+    print(f'Error: {e}')
+    sys.exit(1)
+EOF
