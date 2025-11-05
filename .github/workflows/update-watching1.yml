@@ -1,5 +1,8 @@
 name: Update watching1 from txt
 
+permissions:
+  contents: write
+
 on:
   push:
     paths:
