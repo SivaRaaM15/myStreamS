@@ -1,0 +1,47 @@
+name: Update watching1 from txt
+
+on:
+  push:
+    paths:
+      - 'watching1.txt'
+
+jobs:
+  replace-url:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read new URL from watching1.txt
+        id: read_url
+        run: |
+          NEW_URL=$(head -n 1 watching1.txt | cat)
+          if [ -z "$NEW_URL" ]; then
+            echo "No URL in watching1.txt. Skipping."
+            exit 0
+          fi
+          echo "NEW_URL=$NEW_URL" >> $GITHUB_ENV
+
+      - name: Replace URL in sivarenu.m3u
+        run: |
+          awk '
+            $0 ~ /tvg-id="watching1 ",watching1/ {
+              print;
+              getline;
+              print ENVIRON["NEW_URL"];
+              next
+            }
+            { print }
+          ' sivarenu.m3u > temp.m3u && mv temp.m3u sivarenu.m3u
+
+      - name: Update watching1.txt with success message
+        run: |
+          echo "import successfully" > watching1.txt
+
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git add sivarenu.m3u watching1.txt
+          git commit -m "chore: update watching1 stream from txt"
+          git push
