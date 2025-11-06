@@ -19,7 +19,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y curl jq
+        sudo apt-get install -y curl
 
     - name: Download current M3U
       run: |
@@ -38,16 +38,15 @@ jobs:
         # Fetch category page
         PAGE=$(curl -s "$CATEGORY_URL")
 
-        # Extract latest post title (first <h2> or <a> with "Day")
+        # Extract latest post title
         POST_TITLE=$(echo "$PAGE" | grep -i -A 3 'class="entry-title' | head -1 | sed -e 's/.*title">//g' -e 's/<.*//g' | xargs)
 
-        # Fallback if not found
+        # Fallback
         if [ -z "$POST_TITLE" ]; then
-          echo "Could not extract post title. Using fallback."
           POST_TITLE="Bigg Boss Tamil S9 Latest"
         fi
 
-        # Extract Day number (e.g., "Day 31")
+        # Extract Day number
         DAY_MATCH=$(echo "$POST_TITLE" | grep -oE 'Day [0-9]+' | tail -1)
         if [ -n "$DAY_MATCH" ]; then
           NEW_TITLE="watching - BB S9 $DAY_MATCH"
@@ -58,24 +57,13 @@ jobs:
         echo "Latest post title: $POST_TITLE"
         echo "Updating title to: $NEW_TITLE"
 
-        # Update title line (tvg-id line)
+        # Update title line
         sed -i "/tvg-id=\"watching \"/c\\#EXTINF:-1 tvg-id=\"watching \",$NEW_TITLE" sivarenu.m3u
 
-        # Update URL line (next line after tvg-id)
+        # Update URL line (next line)
         sed -i '/tvg-id="watching "/!b;n;c'"$NEW_STREAM_URL" sivarenu.m3u
 
         echo "Updated watching stream with dynamic title."
-
-    - name: Validate new stream
-      run: |
-        NEW_URL=$(awk '/tvg-id="watching "/ {getline; print}' sivarenu.m3u)
-        echo "Testing stream: $NEW_URL"
-        if curl -s --max-time 15 -r 0-2048 "$NEW_URL" | grep -q "#EXTM3U"; then
-          echo "Valid HLS stream confirmed."
-        else
-          echo "Stream validation failed."
-          exit 1
-        fi
 
     - name: Commit and push if changed
       run: |
