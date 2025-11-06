@@ -11,7 +11,7 @@ jobs:
     timeout-minutes: 10
 
     permissions:
-      contents: write  # Explicit write permission
+      contents: write
 
     steps:
     - name: Checkout repository
@@ -39,16 +39,11 @@ jobs:
         # Backup
         cp sivarenu.m3u sivarenu.m3u.bak
 
-        # Fetch category page with user agent to avoid blocks
-        PAGE=$(curl -s --max-time 10 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" "$CATEGORY_URL")
+        # Fetch category page
+        PAGE=$(curl -s "$CATEGORY_URL" -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
-        # Improved extraction: Look for h2 or h3 with class containing 'title' or 'post'
-        POST_TITLE=$(echo "$PAGE" | grep -ioE '<h[2-3][^>]*class="[^"]*(entry|post|title)[^"]*"[^>]*>.*?</h[2-3]>' | head -1 | sed -e 's/<[^>]*>//g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | xargs)
-
-        # Alternative: Extract from any h2/h3 tag
-        if [ -z "$POST_TITLE" ]; then
-          POST_TITLE=$(echo "$PAGE" | grep -ioE '<h[2-3][^>]*>.*?</h[2-3]>' | head -1 | sed -e 's/<[^>]*>//g' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | xargs)
-        fi
+        # Improved extraction: Find first entry-title link and get text
+        POST_TITLE=$(echo "$PAGE" | grep -oE '<a class="entry-title-link" href="[^"]*">[^<]*</a>' | head -1 | sed -e 's/.*">\(.*\)<\/a>/\1/' | xargs)
 
         # Fallback
         if [ -z "$POST_TITLE" ]; then
@@ -63,43 +58,27 @@ jobs:
           NEW_TITLE="watching - BB S9 Latest"
         fi
 
-        echo "Extracted post title: '$POST_TITLE'"
+        echo "Latest post title: $POST_TITLE"
         echo "Updating title to: $NEW_TITLE"
 
-        # Update title line (safer sed - no backslash issues)
-        sed -i.bak "/tvg-id=\"watching \"/s|tvg-id=\"watching \",.*|tvg-id=\"watching \",$NEW_TITLE|" sivarenu.m3u
+        # Update title line
+        sed -i "/tvg-id=\"watching \"/c\\#EXTINF:-1 tvg-id=\"watching \",$NEW_TITLE" sivarenu.m3u
 
-        # Update URL line (next line after tvg-id)
-        sed -i.bak '/tvg-id="watching "/{n; s|.*|'"$NEW_STREAM_URL"'|}' sivarenu.m3u
+        # Update URL line
+        sed -i '/tvg-id="watching "/{n;s/.*/'"$NEW_STREAM_URL"'/}' sivarenu.m3u
 
-        echo "Updated watching stream successfully."
+        echo "Updated watching stream with dynamic title."
 
     - name: Commit and push if changed
       run: |
         git config user.name "StreamBot"
         git config user.email "streambot@users.noreply.github.com"
 
-        if ! git diff --quiet sivarenu.m3u; then
-          git add sivarenu.m3u
-          DAY_INFO=$(grep 'tvg-id="watching "' sivarenu.m3u | sed 's/.*BB S9 //g' | head -c 20)
-          COMMIT_MSG="Update watching → BB S9 $DAY_INFO"
-          git commit -m "$COMMIT_MSG"
-          if git push origin main; then
-            echo "Successfully pushed update."
-          else
-            echo "Push failed - Ensure 'Read and write permissions' is enabled in repo Settings > Actions > General"
-            exit 1
-          fi
+        if git diff --quiet sivarenu.m3u; then
+          echo "No changes detected."
         else
-          echo "No changes to commit."
+          git add sivarenu.m3u
+          git commit -m "Update watching → BB S9 $(awk '/tvg-id="watching "/ {print substr($0, index($0, "BB S9"))}' sivarenu.m3u | head -c 30)"
+          git push origin main
+          echo "Playlist updated and pushed."
         fi
-
-    - name: Upload backup for review
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: m3u-backup
-        path: |
-          sivarenu.m3u.bak
-          sivarenu.m3u
-        retention-days: 1
