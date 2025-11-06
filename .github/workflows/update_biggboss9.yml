@@ -31,24 +31,19 @@ jobs:
 
     - name: Update watching stream with latest working source
       run: |
-       709        set -euo pipefail
-
         # Backup
         cp sivarenu.m3u sivarenu.m3u.bak
 
-        # === LATEST WORKING SOURCE (from your VLC test) ===
+        # === LATEST WORKING SOURCE (confirmed in VLC) ===
         NEW_STREAM_URL="https://www.dailymotion.com/cdn/manifest/video/x9t9dx0.m3u8?sec=UV4SfRj1FI_DLyWL7oU0P1-NZjaV2ba8UoJC5P7VA2_Oc0jbDSIop6lZtocSSshTKDv7Av1A4iRQmlZz5MskqLubzvbzZPNumrD3UMlsilHaME5ti9BThLFClVZjrAKU&dmTs=430000&dmV1st=359cf258-fa2a-4886-9464-e75bca2af369"
 
-        # === SCRAPE LATEST DAY FROM CATEGORY (title only) ===
+        # === SCRAPE LATEST DAY FROM CATEGORY ===
         HEADERS="-A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' -H 'Accept: text/html'"
 
-        CATEGORY_PAGE=$(curl -s $HEADERS --max-time 30 "https://www.1tamilcrow.net/category/bigg-boss-live-stream/" || echo "FETCH_FAILED")
+        CATEGORY_PAGE=$(curl -s $HEADERS --max-time 30 "https://www.1tamilcrow.net/category/bigg-boss-live-stream/" || echo "")
 
-        if [[ "$CATEGORY_PAGE" != "FETCH_FAILED" ]]; then
-          # Extract latest post title
+        if [ -n "$CATEGORY_PAGE" ]; then
           POST_TITLE=$(echo "$CATEGORY_PAGE" | grep -oE '<h2 class="entry-title">[^<]*' | head -1 | sed 's/<h2 class="entry-title">//' | xargs || echo "Bigg Boss Tamil S9 Latest")
-
-          # Extract Day (e.g., Day 31)
           DAY_MATCH=$(echo "$POST_TITLE" | grep -oE 'Day [0-9]+' || echo "Latest")
         else
           POST_TITLE="Bigg Boss Tamil S9 Latest"
@@ -77,7 +72,7 @@ jobs:
         if ! git diff --quiet sivarenu.m3u; then
           git add sivarenu.m3u
           DAY_INFO=$(grep 'tvg-id="watching "' sivarenu.m3u | sed 's|.*BB S9 ||' | head -c 20)
-          git commit -m "Update watching → BB S9 $DAY_INFO"
+          git commit -m "Update watching to BB S9 $DAY_INFO"
           git push origin main && echo "Pushed successfully." || { echo "Push failed - check permissions."; exit 1; }
         else
           echo "No changes needed."
