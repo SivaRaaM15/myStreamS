@@ -33,7 +33,7 @@ jobs:
         fi
 
         # Extract URLs (limit to 8 for speed)
-        grep "^http" sivarenu.m3u | head -8 > urls_to_test.txt
+        grep "^http" sivarenu.m3u | head -10 > urls_to_test.txt
         TOTAL_URLS=$(wc -l < urls_to_test.txt)
         
         echo "📊 Testing $TOTAL_URLS URLs with parallel processing..."
