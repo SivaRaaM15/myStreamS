@@ -29,68 +29,45 @@ jobs:
       run: |
         curl -fsSL --max-time 30 "https://raw.githubusercontent.com/SivaRaaM15/myStreamS/refs/heads/main/sivarenu.m3u" -o sivarenu.m3u
 
-    - name: Scrape latest episode and update stream
+    - name: Update watching stream with latest working source
       run: |
-        set -euo pipefail
+       709        set -euo pipefail
 
         # Backup
         cp sivarenu.m3u sivarenu.m3u.bak
 
-        # Browser-like headers
-        HEADERS="-A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' -H 'Accept: text/html,application/xhtml+xml' -H 'Accept-Language: en-US,en;q=0.5'"
+        # === LATEST WORKING SOURCE (from your VLC test) ===
+        NEW_STREAM_URL="https://www.dailymotion.com/cdn/manifest/video/x9t9dx0.m3u8?sec=UV4SfRj1FI_DLyWL7oU0P1-NZjaV2ba8UoJC5P7VA2_Oc0jbDSIop6lZtocSSshTKDv7Av1A4iRQmlZz5MskqLubzvbzZPNumrD3UMlsilHaME5ti9BThLFClVZjrAKU&dmTs=430000&dmV1st=359cf258-fa2a-4886-9464-e75bca2af369"
 
-        # Step 1: Fetch category
-        echo "Fetching category..."
+        # === SCRAPE LATEST DAY FROM CATEGORY (title only) ===
+        HEADERS="-A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' -H 'Accept: text/html'"
+
         CATEGORY_PAGE=$(curl -s $HEADERS --max-time 30 "https://www.1tamilcrow.net/category/bigg-boss-live-stream/" || echo "FETCH_FAILED")
 
-        if [[ "$CATEGORY_PAGE" == "FETCH_FAILED" ]]; then
-          echo "Category fetch failed - using manual fallback"
-          NEW_TITLE="watching - BB S9 Day 31 (Manual)"
-          NEW_STREAM_URL="https://www.dailymotion.com/cdn/manifest/video/[YOUR_FRESH_VIDEO_ID].m3u8?sec=[YOUR_FRESH_TOKEN]&dmTs=430000&dmV1st=[YOUR_V1ST]"  # Replace with Source 1 from Day 31 post
+        if [[ "$CATEGORY_PAGE" != "FETCH_FAILED" ]]; then
+          # Extract latest post title
+          POST_TITLE=$(echo "$CATEGORY_PAGE" | grep -oE '<h2 class="entry-title">[^<]*' | head -1 | sed 's/<h2 class="entry-title">//' | xargs || echo "Bigg Boss Tamil S9 Latest")
+
+          # Extract Day (e.g., Day 31)
+          DAY_MATCH=$(echo "$POST_TITLE" | grep -oE 'Day [0-9]+' || echo "Latest")
         else
-          # Step 2: Extract latest post link (e.g., /bigg-boss-9-tamil-05-11-2025/)
-          LATEST_POST_LINK=$(echo "$CATEGORY_PAGE" | grep -oE 'href="(/[^"]*bigg-boss-9-tamil[^"]*\.html)"' | head -1 | sed 's|href="||; s|"$||' || echo "")
-
-          if [ -z "$LATEST_POST_LINK" ]; then
-            echo "No post link - fallback"
-            NEW_TITLE="watching - BB S9 Latest"
-            NEW_STREAM_URL="[MANUAL_URL_HERE]"  # Your Day 31 Source 1
-          else
-            echo "Latest post link: $LATEST_POST_LINK"
-            POST_URL="https://www.1tamilcrow.net$LATEST_POST_LINK"
-
-            # Step 3: Fetch post page
-            POST_PAGE=$(curl -s $HEADERS --max-time 30 "$POST_URL" || echo "FETCH_FAILED")
-
-            if [[ "$POST_PAGE" == "FETCH_FAILED" ]]; then
-              echo "Post fetch failed - fallback"
-              NEW_TITLE="watching - BB S9 Day 31"
-              NEW_STREAM_URL="[MANUAL_URL_HERE]"
-            else
-              # Step 4: Extract title (e.g., "Bigg Boss 9 Tamil 05-11-2025 | Day 31 | Vijay TV Show")
-              POST_TITLE=$(echo "$POST_PAGE" | grep -i -E '<title>.*</title>' | sed 's|<title>\(.*\)</title>|\1|' | sed 's| - 1tamilcrow||' | head -1 | xargs)
-
-              # Extract Day
-              DAY_MATCH=$(echo "$POST_TITLE" | grep -oE 'Day [0-9]+' || echo "Latest")
-              NEW_TITLE="watching - BB S9 $DAY_MATCH"
-
-              # Step 5: Extract Source 1 .m3u8 (look near "Source 1")
-              NEW_STREAM_URL=$(echo "$POST_PAGE" | grep -A 10 -i "source 1" | grep -oE 'https://www\.dailymotion\.com/cdn/manifest/video/[a-z0-9]+\.m3u8[^"]*' | head -1 || \
-                               echo "$POST_PAGE" | grep -oE 'https://www\.dailymotion\.com/cdn/manifest/video/[a-z0-9]+\.m3u8[^"]*' | head -1 || \
-                               echo "[MANUAL_URL_HERE]")
-
-              echo "Post title: '$POST_TITLE'"
-              echo "Day match: '$DAY_MATCH'"
-              echo "Stream URL: '$NEW_STREAM_URL'"
-            fi
-          fi
+          POST_TITLE="Bigg Boss Tamil S9 Latest"
+          DAY_MATCH="Latest"
         fi
 
-        # Step 6: Update .m3u (safer sed with | delimiter)
+        NEW_TITLE="watching - BB S9 $DAY_MATCH"
+
+        echo "Post title: '$POST_TITLE'"
+        echo "New title: $NEW_TITLE"
+        echo "Using stream: $NEW_STREAM_URL"
+
+        # Update title (safe with | delimiter)
         sed -i.bak "s|tvg-id=\"watching \",.*|tvg-id=\"watching \",$NEW_TITLE|" sivarenu.m3u
+
+        # Update URL (next line after tvg-id)
         sed -i.bak '/tvg-id="watching "/{n; s|.*|'"$NEW_STREAM_URL"'|}' sivarenu.m3u
 
-        echo "Final update: Title='$NEW_TITLE', URL length=${#NEW_STREAM_URL}"
+        echo "Updated watching stream."
 
     - name: Commit and push if changed
       run: |
@@ -110,7 +87,7 @@ jobs:
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: m3u-update-debug
+        name: m3u-update
         path: |
           sivarenu.m3u
           sivarenu.m3u.bak
