@@ -1,0 +1,92 @@
+name: Update Bigg Boss Tamil S9 - watching Stream
+
+on:
+  schedule:
+    - cron: '0 12 * * *'  # Daily at 12:00 PM MYT
+  workflow_dispatch:
+
+jobs:
+  update-watching-stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y curl jq
+
+    - name: Download current M3U
+      run: |
+        curl -fsSL "https://raw.githubusercontent.com/SivaRaaM15/myStreamS/refs/heads/main/sivarenu.m3u" -o sivarenu.m3u
+
+    - name: Extract Day from latest post title and update stream
+      run: |
+        # === CONFIG ===
+        CATEGORY_URL="https://www.1tamilcrow.net/category/bigg-boss-live-stream/"
+        NEW_STREAM_URL="https://www.dailymotion.com/cdn/manifest/video/x9t9dx0.m3u8?sec=N5WykoA6fF-lEq6KthqqsxZJZTEC-m0Vr02Rvbtnjmt6ZN5Zpk9Gn775N-koZrJvADPpX7x1UtBIDeV5SbzAgdA-wTAfi8fCJtfJscPT2uuPO066guop6NE2jIbjsF7Q&dmTs=430000&dmV1st=359cf258-fa2a-4886-9464-e75bca2af369"
+        # ===============
+
+        # Backup
+        cp sivarenu.m3u sivarenu.m3u.bak
+
+        # Fetch category page
+        PAGE=$(curl -s "$CATEGORY_URL")
+
+        # Extract latest post title (first <h2> or <a> with "Day")
+        POST_TITLE=$(echo "$PAGE" | grep -i -A 3 'class="entry-title' | head -1 | sed -e 's/.*title">//g' -e 's/<.*//g' | xargs)
+
+        # Fallback if not found
+        if [ -z "$POST_TITLE" ]; then
+          echo "Could not extract post title. Using fallback."
+          POST_TITLE="Bigg Boss Tamil S9 Latest"
+        fi
+
+        # Extract Day number (e.g., "Day 31")
+        DAY_MATCH=$(echo "$POST_TITLE" | grep -oE 'Day [0-9]+' | tail -1)
+        if [ -n "$DAY_MATCH" ]; then
+          NEW_TITLE="watching - BB S9 $DAY_MATCH"
+        else
+          NEW_TITLE="watching - BB S9 Latest"
+        fi
+
+        echo "Latest post title: $POST_TITLE"
+        echo "Updating title to: $NEW_TITLE"
+
+        # Update title line (tvg-id line)
+        sed -i "/tvg-id=\"watching \"/c\\#EXTINF:-1 tvg-id=\"watching \",$NEW_TITLE" sivarenu.m3u
+
+        # Update URL line (next line after tvg-id)
+        sed -i '/tvg-id="watching "/!b;n;c'"$NEW_STREAM_URL" sivarenu.m3u
+
+        echo "Updated watching stream with dynamic title."
+
+    - name: Validate new stream
+      run: |
+        NEW_URL=$(awk '/tvg-id="watching "/ {getline; print}' sivarenu.m3u)
+        echo "Testing stream: $NEW_URL"
+        if curl -s --max-time 15 -r 0-2048 "$NEW_URL" | grep -q "#EXTM3U"; then
+          echo "Valid HLS stream confirmed."
+        else
+          echo "Stream validation failed."
+          exit 1
+        fi
+
+    - name: Commit and push if changed
+      run: |
+        git config user.name "StreamBot"
+        git config user.email "streambot@users.noreply.github.com"
+
+        if git diff --quiet sivarenu.m3u; then
+          echo "No changes detected."
+        else
+          git add sivarenu.m3u
+          git commit -m "Update watching → BB S9 $(awk '/tvg-id="watching "/ {print substr($0, index($0, "BB S9"))}' sivarenu.m3u | head -c 30)"
+          git push origin main
+          echo "Playlist updated and pushed."
+        fi
