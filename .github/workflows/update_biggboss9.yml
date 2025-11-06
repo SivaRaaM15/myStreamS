@@ -29,22 +29,22 @@ jobs:
       run: |
         curl -fsSL --max-time 30 "https://raw.githubusercontent.com/SivaRaaM15/myStreamS/refs/heads/main/sivarenu.m3u" -o sivarenu.m3u
 
-    - name: Update watching stream with latest working source
+    - name: Update watching stream with confirmed working source
       run: |
         # Backup
         cp sivarenu.m3u sivarenu.m3u.bak
 
-        # === LATEST WORKING SOURCE (confirmed in VLC) ===
+        # === CONFIRMED WORKING IN VLC (Nov 06, 2025) ===
         NEW_STREAM_URL="https://www.dailymotion.com/cdn/manifest/video/x9t9dx0.m3u8?sec=UV4SfRj1FI_DLyWL7oU0P1-NZjaV2ba8UoJC5P7VA2_Oc0jbDSIop6lZtocSSshTKDv7Av1A4iRQmlZz5MskqLubzvbzZPNumrD3UMlsilHaME5ti9BThLFClVZjrAKU&dmTs=430000&dmV1st=359cf258-fa2a-4886-9464-e75bca2af369"
 
-        # === SCRAPE LATEST DAY FROM CATEGORY ===
+        # === SCRAPE LATEST DAY FROM CATEGORY PAGE ===
         HEADERS="-A 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' -H 'Accept: text/html'"
 
         CATEGORY_PAGE=$(curl -s $HEADERS --max-time 30 "https://www.1tamilcrow.net/category/bigg-boss-live-stream/" || echo "")
 
         if [ -n "$CATEGORY_PAGE" ]; then
           POST_TITLE=$(echo "$CATEGORY_PAGE" | grep -oE '<h2 class="entry-title">[^<]*' | head -1 | sed 's/<h2 class="entry-title">//' | xargs || echo "Bigg Boss Tamil S9 Latest")
-          DAY_MATCH=$(echo "$POST_TITLE" | grep -oE 'Day [0-9]+' || echo "Latest")
+          DAY_MATCH=$(echo "$POST_TITLE" | grep -oE 'Day [0-9]+' | tail -1 || echo "Latest")
         else
           POST_TITLE="Bigg Boss Tamil S9 Latest"
           DAY_MATCH="Latest"
@@ -54,17 +54,17 @@ jobs:
 
         echo "Post title: '$POST_TITLE'"
         echo "New title: $NEW_TITLE"
-        echo "Using stream: $NEW_STREAM_URL"
+        echo "Using confirmed stream: $NEW_STREAM_URL"
 
-        # Update title (safe with | delimiter)
+        # Update title
         sed -i.bak "s|tvg-id=\"watching \",.*|tvg-id=\"watching \",$NEW_TITLE|" sivarenu.m3u
 
-        # Update URL (next line after tvg-id)
+        # Update URL
         sed -i.bak '/tvg-id="watching "/{n; s|.*|'"$NEW_STREAM_URL"'|}' sivarenu.m3u
 
-        echo "Updated watching stream."
+        echo "Update applied."
 
-    - name: Commit and push if changed
+    - name: Commit and push
       run: |
         git config user.name "StreamBot"
         git config user.email "streambot@users.noreply.github.com"
@@ -73,16 +73,16 @@ jobs:
           git add sivarenu.m3u
           DAY_INFO=$(grep 'tvg-id="watching "' sivarenu.m3u | sed 's|.*BB S9 ||' | head -c 20)
           git commit -m "Update watching to BB S9 $DAY_INFO"
-          git push origin main && echo "Pushed successfully." || { echo "Push failed - check permissions."; exit 1; }
+          git push origin main && echo "Pushed." || { echo "Push failed."; exit 1; }
         else
-          echo "No changes needed."
+          echo "No changes."
         fi
 
-    - name: Upload files for review
+    - name: Upload M3U
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: m3u-update
+        name: m3u-files
         path: |
           sivarenu.m3u
           sivarenu.m3u.bak
