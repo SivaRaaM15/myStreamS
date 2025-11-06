@@ -10,11 +10,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    permissions:
+      contents: write  # Explicit write permission
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0  # For git history
 
     - name: Install dependencies
       run: |
@@ -36,17 +40,17 @@ jobs:
         cp sivarenu.m3u sivarenu.m3u.bak
 
         # Fetch category page
-        PAGE=$(curl -s "$CATEGORY_URL")
+        PAGE=$(curl -s --max-time 10 "$CATEGORY_URL")
 
-        # Extract latest post title
-        POST_TITLE=$(echo "$PAGE" | grep -i -A 3 'class="entry-title' | head -1 | sed -e 's/.*title">//g' -e 's/<.*//g' | xargs)
+        # Extract latest post title (improved selector)
+        POST_TITLE=$(echo "$PAGE" | grep -i 'class="[^"]*title[^"]*"' | head -1 | sed -e 's/.*>\([^<]*\)<\/.*/\1/g' | xargs)
 
-        # Fallback
+        # Fallback if empty
         if [ -z "$POST_TITLE" ]; then
           POST_TITLE="Bigg Boss Tamil S9 Latest"
         fi
 
-        # Extract Day number
+        # Extract Day number (e.g., "Day 31")
         DAY_MATCH=$(echo "$POST_TITLE" | grep -oE 'Day [0-9]+' | tail -1)
         if [ -n "$DAY_MATCH" ]; then
           NEW_TITLE="watching - BB S9 $DAY_MATCH"
@@ -54,27 +58,39 @@ jobs:
           NEW_TITLE="watching - BB S9 Latest"
         fi
 
-        echo "Latest post title: $POST_TITLE"
+        echo "Latest post title: '$POST_TITLE'"
         echo "Updating title to: $NEW_TITLE"
 
-        # Update title line
-        sed -i "/tvg-id=\"watching \"/c\\#EXTINF:-1 tvg-id=\"watching \",$NEW_TITLE" sivarenu.m3u
+        # Update title line (exact match)
+        sed -i.bak "/tvg-id=\"watching \"/s/.*/#EXTINF:-1 tvg-id=\"watching \",$NEW_TITLE/" sivarenu.m3u
 
-        # Update URL line (next line)
-        sed -i '/tvg-id="watching "/!b;n;c'"$NEW_STREAM_URL" sivarenu.m3u
+        # Update URL line (next line after tvg-id)
+        sed -i.bak '/tvg-id="watching "/{n;s/.*/'"$NEW_STREAM_URL"'/}' sivarenu.m3u
 
-        echo "Updated watching stream with dynamic title."
+        echo "Updated watching stream."
 
     - name: Commit and push if changed
       run: |
         git config user.name "StreamBot"
         git config user.email "streambot@users.noreply.github.com"
 
-        if git diff --quiet sivarenu.m3u; then
-          echo "No changes detected."
-        else
+        if ! git diff --quiet sivarenu.m3u; then
           git add sivarenu.m3u
-          git commit -m "Update watching → BB S9 $(awk '/tvg-id="watching "/ {print substr($0, index($0, "BB S9"))}' sivarenu.m3u | head -c 30)"
-          git push origin main
-          echo "Playlist updated and pushed."
+          COMMIT_MSG="Update watching → BB S9 $(grep 'tvg-id="watching "' sivarenu.m3u | sed 's/.*BB S9 //g' | head -c 20)"
+          git commit -m "$COMMIT_MSG"
+          git push origin main || {
+            echo "Push failed - check permissions in repo Settings > Actions > General > Workflow permissions"
+            exit 1
+          }
+          echo "Successfully pushed update."
+        else
+          echo "No changes to commit."
         fi
+
+    - name: Upload backup for review
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: m3u-backup
+        path: sivarenu.m3u.bak
+        retention-days: 1
