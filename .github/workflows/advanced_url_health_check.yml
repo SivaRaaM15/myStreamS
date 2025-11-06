@@ -1,0 +1,235 @@
+name: Advanced URL Health Check
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  advanced-url-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y curl parallel jq
+
+    - name: Download M3U file from GitHub Raw
+      run: |
+        M3U_URL="https://raw.githubusercontent.com/SivaRaaM15/myStreamS/refs/heads/main/sivarenu.m3u"
+        echo "Fetching M3U from: $M3U_URL"
+        curl -fsSL "$M3U_URL" -o sivarenu.m3u || {
+          echo "Failed to download M3U file!"
+          exit 1
+        }
+        if [ ! -s "sivarenu.m3u" ]; then
+          echo "Downloaded M3U is empty!"
+          exit 1
+        fi
+        echo "M3U file downloaded successfully."
+
+    - name: Advanced URL Health Check
+      run: |
+        set -euo pipefail
+
+        echo "Starting Advanced URL Health Check..."
+        echo "==============================================="
+
+        # Extract all HTTP/HTTPS URLs and their titles
+        mkdir -p results
+        > url_list.txt
+        > report.jsonl
+
+        awk '
+          /^#EXTINF/ { title=$0; gsub(/.*tvg-id="/, "", title); gsub(/".*/, "", title) }
+          /^http/ { print title "|" $0 }
+        ' sivarenu.m3u > url_list.txt
+
+        TOTAL_URLS=$(wc -l < url_list.txt)
+        echo "Found $TOTAL_URLS streams to test."
+
+        if [ "$TOTAL_URLS" -eq 0 ]; then
+          echo "No URLs found in M3U!"
+          exit 1
+        fi
+
+        # Test function
+        test_url() {
+          local line="$1"
+          local num="$2"
+          local title=$(echo "$line" | cut -d'|' -f1)
+          local url=$(echo "$line" | cut -d'|' -f2-)
+
+          local result_file="results/result_$num.json"
+          local log_file="results/log_$num.txt"
+
+          {
+            echo "{"
+            echo "  \"index\": $num,"
+            echo "  \"title\": \"$title\","
+            echo "  \"url\": \"$url\","
+
+            # Clean URL
+            local clean_url=$(echo "$url" | sed 's/[[:space:]]*$//' | tr -d '\r')
+
+            # HTTP HEAD check
+            local http_code=0
+            local content_type="unknown"
+            local redirect_count=0
+            local total_time=0
+            local response=""
+
+            response=$(curl -s -I -L --max-time 12 \
+              -A "VLC/3.0.0" \
+              -H "Accept: application/x-mpegURL, */*" \
+              --write-out "\nHTTP_CODE:%{http_code}\nCONTENT_TYPE:%{content_type}\nREDIRECTS:%{num_redirects}\nTIME_TOTAL:%{time_total}" \
+              "$clean_url" 2>/dev/null || echo "HTTP_CODE:000")
+
+            http_code=$(echo "$response" | grep "HTTP_CODE:" | cut -d: -f2)
+            content_type=$(echo "$response" | grep "CONTENT_TYPE:" | cut -d: -f2- | head -1)
+            redirect_count=$(echo "$response" | grep "REDIRECTS:" | cut -d: -f2)
+            total_time=$(echo "$response" | grep "TIME_TOTAL:" | cut -d: -f2)
+
+            echo "  \"http_code\": \"$http_code\","
+            echo "  \"content_type\": \"$content_type\","
+            echo "  \"redirects\": $redirect_count,"
+            echo "  \"response_time\": $total_time,"
+
+            # Stream validation
+            local is_stream=0
+            local has_ts=0
+            local bitrate="unknown"
+
+            if [[ "$http_code" == "200" || "$http_code" == "206" ]]; then
+              if echo "$content_type" | grep -q "mpegURL\|m3u8"; then
+                # Check if it's a valid HLS master
+                if curl -s --max-time 8 -r 0-2048 "$clean_url" | grep -q "#EXTM3U"; then
+                  is_stream=1
+                fi
+
+                # Try to fetch first .ts segment
+                local ts_url=$(curl -s --max-time 8 "$clean_url" | grep -m1 "\.ts" | head -1 | sed 's/^[^h].*//')
+                if [ -n "$ts_url" ]; then
+                  if curl -s -I --max-time 8 "$(echo "$ts_url" | sed 's|^/|'"${clean_url%/*}"'/|')" 2>/dev/null | grep -q "200"; then
+                    has_ts=1
+                  fi
+                fi
+
+                # Extract bitrate if available
+                bitrate=$(curl -s --max-time 8 "$clean_url" | grep "BANDWIDTH" | head -1 | grep -o "BANDWIDTH=[0-9]*" | cut -d= -f2 || echo "unknown")
+                [ "$bitrate" = "" ] && bitrate="unknown"
+              fi
+            fi
+
+            echo "  \"is_stream\": $is_stream,"
+            echo "  \"has_ts_segment\": $has_ts,"
+            echo "  \"bitrate\": \"$bitrate\","
+
+            # Token expiry estimate (for ciinema.net)
+            local token_expiry="unknown"
+            if echo "$clean_url" | grep -q "ciinema.net.*e=[0-9]*"; then
+              local expiry_sec=$(echo "$clean_url" | grep -o "e=[0-9]*" | cut -d= -f2)
+              local hours_left=$(( (expiry_sec - $(date +%s) + 1720000000) / 3600 ))
+              [ $hours_left -gt 0 ] && token_expiry="${hours_left}h" || token_expiry="expired"
+            fi
+            echo "  \"token_expiry\": \"$token_expiry\","
+
+            # Final status
+            local status="failed"
+            if [ "$http_code" = "200" ] || [ "$http_code" = "206" ]; then
+              if [ $is_stream -eq 1 ] && [ $has_ts -eq 1 ]; then
+                status="healthy"
+              elif [ $is_stream -eq 1 ]; then
+                status="warning"
+              else
+                status="caution"
+              fi
+            fi
+
+            echo "  \"status\": \"$status\""
+            echo "}"
+          } > "$result_file"
+
+          # Log summary
+          {
+            echo "[$num] $title"
+            echo "   URL: ${clean_url:0:60}..."
+            echo "   Status: HTTP $http_code | $(echo "$content_type" | cut -c1-30)"
+            echo "   Time: ${total_time}s | Redirects: $redirect_count"
+            echo "   Stream: $( [ $is_stream -eq 1 ] && echo "Yes" || echo "No" ) | TS: $( [ $has_ts -eq 1 ] && echo "Yes" || echo "No" )"
+            echo "   Result: $status"
+            [ "$token_expiry" != "unknown" ] && echo "   Token: $token_expiry"
+            echo
+          } > "$log_file"
+        }
+
+        export -f test_url
+        seq 1 $TOTAL_URLS | parallel -j 3 --line-buffer test_url '{}'
+
+        # Combine JSONL
+        for f in results/result_*.json; do cat "$f"; echo; done > report.jsonl
+
+        # Generate summary
+        HEALTHY=$(jq -s 'map(select(.status == "healthy")) | length' report.jsonl)
+        WARNING=$(jq -s 'map(select(.status == "warning")) | length' report.jsonl)
+        CAUTION=$(jq -s 'map(select(.status == "caution")) | length' report.jsonl)
+        FAILED=$(jq -s 'map(select(.status == "failed")) | length' report.jsonl)
+
+        echo "==============================================="
+        echo "HEALTH CHECK SUMMARY"
+        echo "==============================================="
+        echo "Total URLs: $TOTAL_URLS"
+        echo "Healthy: $HEALTHY"
+        echo "Warning: $WARNING"
+        echo "Caution: $CAUTION"
+        echo "Failed: $FAILED"
+        echo "Checked at: $(date -u '+%Y-%m-%d %H:%M:%SZ')"
+        echo "==============================================="
+        echo
+
+        # Save summary
+        {
+          echo "Advanced URL Health Check Report"
+          echo "Generated: $(date -u '+%Y-%m-%d %H:%M:%SZ')"
+          echo
+          echo "Summary:"
+          echo "  Total: $TOTAL_URLS"
+          echo "  Healthy: $HEALTHY"
+          echo "  Warning: $WARNING"
+          echo "  Caution: $CAUTION"
+          echo "  Failed: $FAILED"
+          echo
+          echo "Details:"
+          for f in results/log_*.txt; do cat "$f"; done
+        } > health-summary.txt
+
+        # Exit code
+        if [ $HEALTHY -eq 0 ]; then
+          echo "CRITICAL: No healthy streams!"
+          exit 1
+        elif [ $((HEALTHY + WARNING)) -lt $((TOTAL_URLS / 2)) ]; then
+          echo "WARNING: Less than 50% working"
+          exit 0
+        else
+          echo "SUCCESS: System operational"
+          exit 0
+        fi
+
+    - name: Upload Health Report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: url-health-report
+        path: |
+          sivarenu.m3u
+          health-summary.txt
+          report.jsonl
+          results/
+        retention-days: 7
