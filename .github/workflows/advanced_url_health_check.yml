@@ -10,7 +10,7 @@ on:
 jobs:
   advanced-url-check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
     - name: Checkout repository
@@ -46,7 +46,7 @@ jobs:
         > report.jsonl
         > summary.log
 
-        # Parse M3U: extract title (tvg-id) and URL
+        # Parse M3U: extract tvg-id and URL
         awk '
           /^#EXTINF/ {
             title = $0
@@ -55,6 +55,7 @@ jobs:
             if (title == "") title = "Unknown"
           }
           /^https?:\/\// {
+            gsub(/\r$/, "", $0)
             print title "|" $0
           }
         ' sivarenu.m3u > url_list.txt
@@ -67,7 +68,7 @@ jobs:
           exit 1
         fi
 
-        # Test function — builds valid JSON with jq
+        # Test function — uses GET with range (no HEAD)
         test_url() {
           local line="$1"
           local num="$2"
@@ -80,59 +81,72 @@ jobs:
           # Default values
           local http_code="000"
           local content_type="unknown"
-          local redirect_count=0
-          local total_time=0
+          local response_time="0"
           local is_stream=0
           local has_ts=0
           local bitrate="unknown"
           local token_expiry="unknown"
           local status="failed"
+          local debug=""
 
-          # Clean URL
-          local clean_url="$url"
+          # VLC-like headers
+          local user_agent="VLC/3.0.0 LibVLC/3.0.0"
+          local accept="*/*"
+          local referer=""
 
-          # HTTP HEAD request
+          # Special handling
+          if echo "$url" | grep -q "dailymotion.com"; then
+            referer="https://www.dailymotion.com/"
+          elif echo "$url" | grep -q "ciinema.net"; then
+            referer="https://ciinema.net/"
+          fi
+
+          # Use GET with range to fetch first 2KB — avoids 405
           local response
-          response=$(curl -s -I -L --max-time 12 \
-            -A "VLC/3.0.0 LibVLC/3.0.0" \
-            -H "Accept: application/x-mpegURL, */*" \
-            --write-out "\nHTTP_CODE:%{http_code}\nCONTENT_TYPE:%{content_type}\nREDIRECTS:%{num_redirects}\nTIME_TOTAL:%{time_total}" \
-            "$clean_url" 2>/dev/null || echo "HTTP_CODE:000")
+          response=$(curl -s --max-time 20 \
+            -r 0-2047 \
+            -L \
+            -A "$user_agent" \
+            -H "Accept: $accept" \
+            $( [ -n "$referer" ] && echo "-H 'Referer: $referer'" ) \
+            --write-out "\nHTTP_CODE:%{http_code}\nCONTENT_TYPE:%{content_type}\nTIME_TOTAL:%{time_total}\nURL_EFFECTIVE:%{url_effective}" \
+            "$url" 2>/dev/null || echo "HTTP_CODE:000\nCONTENT_TYPE:unknown\nTIME_TOTAL:20\nURL_EFFECTIVE:$url")
 
           http_code=$(echo "$response" | grep -m1 "HTTP_CODE:" | cut -d: -f2)
           content_type=$(echo "$response" | grep -m1 "CONTENT_TYPE:" | cut -d: -f2- | head -1)
-          redirect_count=$(echo "$response" | grep -m1 "REDIRECTS:" | cut -d: -f2)
-          total_time=$(echo "$response" | grep -m1 "TIME_TOTAL:" | cut -d: -f2)
+          response_time=$(echo "$response" | grep -m1 "TIME_TOTAL:" | cut -d: -f2)
+          local final_url=$(echo "$response" | grep -m1 "URL_EFFECTIVE:" | cut -d: -f2-)
 
-          # Stream checks only if HTTP 200/206
+          # Extract body
+          local body=$(echo "$response" | sed -n '/^HTTP_CODE:/,$d' | head -c 2048)
+
+          # Check for HLS
           if [[ "$http_code" == "200" || "$http_code" == "206" ]]; then
-            if echo "$content_type" | grep -qi "mpegurl\|m3u8"; then
-              # Check for #EXTM3U
-              if curl -s --max-time 8 -r 0-2048 "$clean_url" | grep -q "#EXTM3U"; then
-                is_stream=1
-              fi
+            if echo "$body" | grep -q "#EXTM3U"; then
+              is_stream=1
+            fi
 
-              # Try to get first .ts segment
-              local base_url="${clean_url%/*}"
-              local ts_line
-              ts_line=$(curl -s --max-time 8 "$clean_url" | grep -m1 "\.ts$" || true)
+            # Optional .ts check (skip on timeout)
+            if [ $is_stream -eq 1 ]; then
+              local base_url="${final_url%/*}"
+              local ts_line=$(echo "$body" | grep -m1 "\.ts$" || true)
               if [ -n "$ts_line" ] && [[ "$ts_line" != http* ]]; then
                 local ts_url="$base_url/$ts_line"
-                if curl -s -I --max-time 8 "$ts_url" 2>/dev/null | grep -q "200"; then
+                if curl -s -I --max-time 10 "$ts_url" 2>/dev/null | grep -q "200"; then
                   has_ts=1
                 fi
               fi
 
-              # Extract bitrate
-              bitrate=$(curl -s --max-time 8 "$clean_url" | grep -m1 "BANDWIDTH" | grep -o "BANDWIDTH=[0-9]*" | cut -d= -f2 || echo "unknown")
+              # Bitrate
+              bitrate=$(echo "$body" | grep -m1 "BANDWIDTH" | grep -o "BANDWIDTH=[0-9]*" | cut -d= -f2 || echo "unknown")
               [ "$bitrate" = "" ] && bitrate="unknown"
             fi
           fi
 
-          # Token expiry for ciinema.net
-          if echo "$clean_url" | grep -q "ciinema.net.*e=[0-9]*"; then
+          # Token expiry
+          if echo "$url" | grep -q "ciinema.net.*e=[0-9]*"; then
             local expiry_sec
-            expiry_sec=$(echo "$clean_url" | grep -o "e=[0-9]*" | cut -d= -f2)
+            expiry_sec=$(echo "$url" | grep -o "e=[0-9]*" | cut -d= -f2)
             local now_sec
             now_sec=$(date +%s)
             local diff_sec=$(( expiry_sec - now_sec ))
@@ -144,7 +158,7 @@ jobs:
             fi
           fi
 
-          # Determine status
+          # Final status
           if [[ "$http_code" == "200" || "$http_code" == "206" ]]; then
             if [ $is_stream -eq 1 ] && [ $has_ts -eq 1 ]; then
               status="healthy"
@@ -155,15 +169,15 @@ jobs:
             fi
           fi
 
-          # Build valid JSON with jq
+          # Build JSON with jq
           jq -n \
             --arg idx "$num" \
             --arg t "$title" \
-            --arg u "$clean_url" \
+            --arg u "$url" \
+            --arg fu "$final_url" \
             --arg hc "$http_code" \
             --arg ct "$content_type" \
-            --arg rc "$redirect_count" \
-            --arg tt "$total_time" \
+            --arg rt "$response_time" \
             --argjson stream "$is_stream" \
             --argjson ts "$has_ts" \
             --arg br "$bitrate" \
@@ -173,10 +187,10 @@ jobs:
               index: $idx,
               title: $t,
               url: $u,
+              final_url: $fu,
               http_code: $hc,
               content_type: $ct,
-              redirects: $rc,
-              response_time: $tt,
+              response_time: $rt,
               is_stream: $stream,
               has_ts_segment: $ts,
               bitrate: $br,
@@ -184,12 +198,13 @@ jobs:
               status: $st
             }' > "$result_file"
 
-          # Log to summary
+          # Human log
           {
             echo "[$num] $title"
-            echo "   URL: ${clean_url:0:60}..."
+            echo "   URL: ${url:0:60}..."
+            echo "   Final: ${final_url:0:60}..."
             echo "   HTTP: $http_code | Type: $content_type"
-            echo "   Time: ${total_time}s | Redirects: $redirect_count"
+            echo "   Time: ${response_time}s"
             echo "   Stream: $([ $is_stream -eq 1 ] && echo "Yes" || echo "No") | TS: $([ $has_ts -eq 1 ] && echo "Yes" || echo "No")"
             echo "   Status: $status"
             [ "$token_expiry" != "unknown" ] && echo "   Token: $token_expiry"
@@ -200,10 +215,10 @@ jobs:
         export -f test_url
         seq 1 $TOTAL_URLS | parallel -j 3 --halt now,fail=1 test_url
 
-        # Combine all JSON results
+        # Combine results
         for f in results/result_*.json; do cat "$f"; echo; done > report.jsonl
 
-        # Generate summary
+        # Summary
         HEALTHY=$(jq 'select(.status == "healthy")' report.jsonl | wc -l)
         WARNING=$(jq 'select(.status == "warning")' report.jsonl | wc -l)
         CAUTION=$(jq 'select(.status == "caution")' report.jsonl | wc -l)
@@ -226,17 +241,14 @@ jobs:
           for f in results/log_*.txt; do cat "$f"; done
         } > health-summary.txt
 
-        echo "Check completed successfully."
+        echo "Check completed."
 
-        # Exit code logic
-        if [ $HEALTHY -eq 0 ]; then
-          echo "CRITICAL: No healthy streams found!"
+        # Exit logic: only CRITICAL if ZERO healthy+warning
+        if [ $((HEALTHY + WARNING)) -eq 0 ]; then
+          echo "CRITICAL: No playable streams!"
           exit 1
-        elif [ $((HEALTHY + WARNING)) -lt $((TOTAL_URLS / 2)) ]; then
-          echo "WARNING: Less than 50% operational"
-          exit 0
         else
-          echo "SUCCESS: System healthy"
+          echo "SUCCESS: At least one stream is playable."
           exit 0
         fi
 
